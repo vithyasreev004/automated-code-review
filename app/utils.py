@@ -2,35 +2,31 @@ import tempfile
 from pathlib import Path
 import zipfile
 from git import Repo
-from typing import Tuple
 import os
+
 MAX_FILE_SIZE = 50 * 1024  # 50 KB per file
 
-def save_uploaded_file_temp(file) -> Tuple[Path, tempfile.TemporaryDirectory]:
-    """Save uploaded file to temporary folder"""
+def save_uploaded_file_temp(file):
     temp_dir = tempfile.TemporaryDirectory()
     file_path = Path(temp_dir.name) / file.filename
     with open(file_path, "wb") as f:
         f.write(file.file.read())
     return file_path, temp_dir
 
-def extract_zip_temp(file_path: Path) -> Tuple[Path, tempfile.TemporaryDirectory]:
-    """Extract zip to temporary directory"""
+def extract_zip_temp(file_path: Path):
     temp_dir = tempfile.TemporaryDirectory()
     extract_path = Path(temp_dir.name)
     with zipfile.ZipFile(file_path, 'r') as zip_ref:
         zip_ref.extractall(extract_path)
     return extract_path, temp_dir
 
-def clone_github_repo_temp(url: str) -> Tuple[Path, tempfile.TemporaryDirectory]:
-    """Clone GitHub repo into temporary directory"""
+def clone_github_repo_temp(url: str):
     temp_dir = tempfile.TemporaryDirectory()
     repo_path = Path(temp_dir.name)
     Repo.clone_from(url, repo_path)
     return repo_path, temp_dir
 
 def get_python_files(root_path: Path):
-    """Recursively fetch all .py files within root_path"""
     py_files = []
     for root, dirs, files in os.walk(root_path):
         for file in files:

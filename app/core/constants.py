@@ -1,5 +1,3 @@
-# app/core/constants.py
-
 SUPPORTED_LANGUAGE = "python"
 
 MAX_FILE_SIZE_KB = 50

@@ -6,7 +6,6 @@ from bandit.core import manager as bandit_manager
 from bandit.core import config as bandit_config
 
 def run_radon(file_path):
-    """Cyclomatic complexity & maintainability index"""
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -18,7 +17,6 @@ def run_radon(file_path):
         return {}
 
 def run_bandit(file_path):
-    """Run bandit analysis programmatically"""
     try:
         b_conf = bandit_config.BanditConfig()
         mgr = bandit_manager.BanditManager(b_conf, "file")
@@ -39,7 +37,6 @@ def run_bandit(file_path):
         return []
 
 def run_pylint(file_path):
-    """Run pylint and return issues"""
     try:
         result = subprocess.run(["pylint", file_path, "-rn", "-f", "json"],
                                 capture_output=True, text=True)
@@ -50,9 +47,17 @@ def run_pylint(file_path):
         return []
 
 def analyze_file(file_path):
-    """Run all static analysis and return dict"""
     return {
         "radon": run_radon(file_path),
         "bandit": run_bandit(file_path),
         "pylint": run_pylint(file_path)
     }
+
+def calculate_confidence(analysis: dict) -> int:
+    score = 100
+    score -= len(analysis.get("pylint", [])) * 2
+    score -= len(analysis.get("bandit", [])) * 5
+    for c in analysis.get("radon", {}).get("cyclomatic_complexity", []):
+        if c["complexity"] > 10:
+            score -= 5
+    return max(score, 0)

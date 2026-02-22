@@ -1,79 +1,36 @@
-import os
-import time
-import requests
+import os, time, requests
 from dotenv import load_dotenv
 from threading import Semaphore
 
 load_dotenv()
-
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise RuntimeError("Missing GROQ_API_KEY")
 
 URL = "https://api.groq.com/openai/v1/chat/completions"
-HEADERS = {
-    "Authorization": f"Bearer {GROQ_API_KEY}",
-    "Content-Type": "application/json",
-}
-
+HEADERS = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
 MODEL = "llama-3.3-70b-versatile"
-
-# 🔒 Allow only N concurrent LLM calls
-LLM_SEMAPHORE = Semaphore(2)  # start with 1 or 2 for free tier
-
+LLM_SEMAPHORE = Semaphore(2)
 MAX_RETRIES = 3
 BACKOFF_SECONDS = 5
-
 
 def run_llm_review(structure: dict, analysis: dict) -> dict:
     prompt = f"""
 You are a senior Python software engineer performing a strict code review.
-
 Return JSON ONLY:
-{{
-  "summary": "...",
-  "risks": ["..."],
-  "confidence": number
-}}
-
-AST:
-{structure}
-
-Static Analysis:
-{analysis}
+{{"summary":"...", "risks":["..."], "confidence":number}}
+AST:{structure}
+Static Analysis:{analysis}
 """
-
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": "You are a strict code reviewer."},
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.2,
-        "max_tokens": 400,
-    }
-
-    for attempt in range(1, MAX_RETRIES + 1):
+    payload = {"model": MODEL, "messages":[{"role":"system","content":"You are a strict code reviewer."},{"role":"user","content":prompt}], "temperature":0.2, "max_tokens":400}
+    for attempt in range(1, MAX_RETRIES+1):
         with LLM_SEMAPHORE:
-            response = requests.post(
-                URL, headers=HEADERS, json=payload, timeout=60
-            )
-
+            response = requests.post(URL, headers=HEADERS, json=payload, timeout=60)
         if response.status_code == 200:
             return response.json()["choices"][0]["message"]["content"]
-
         if response.status_code == 429:
             if attempt == MAX_RETRIES:
-                return {
-                    "summary": "LLM rate limit exceeded",
-                    "risks": ["LLM throttled"],
-                    "confidence": 0,
-                }
-            time.sleep(BACKOFF_SECONDS * attempt)
-
+                return {"summary":"LLM rate limit exceeded","risks":["LLM throttled"],"confidence":0}
+            time.sleep(BACKOFF_SECONDS*attempt)
         else:
-            return {
-                "summary": f"LLM error {response.status_code}",
-                "risks": [response.text],
-                "confidence": 0,
-            }
+            return {"summary":f"LLM error {response.status_code}","risks":[response.text],"confidence":0}

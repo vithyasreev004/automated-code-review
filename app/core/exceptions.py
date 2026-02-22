@@ -1,5 +1,3 @@
-# app/core/exceptions.py
-
 class CodeReviewException(Exception):
     """Base exception for code review system"""
 
