@@ -9,6 +9,7 @@ from app.static_analysis.static_analysis import analyze_file, calculate_confiden
 from app.llm.review_llm import run_llm_review
 from app.llm.refactor_llm import run_llm_refactor
 from app.llm.doc_llm import run_llm_docstrings
+from app.llm.readme_llm import run_llm_readme   # NEW
 
 app = FastAPI(title="Automated Code Review")
 
@@ -18,16 +19,16 @@ def analyze_sync(file_path: Path):
     analysis = analyze_file(file_path)
 
     llm_review = run_llm_review(structure, analysis)
-
-    # Pre confidence score
     pre_confidence = calculate_confidence(analysis)
 
-    # Refactor + document
     original_code = file_path.read_text(encoding="utf-8")
-    refactored_code = run_llm_refactor(original_code, analysis)
-    documented_code = run_llm_docstrings(refactored_code)
+    refactor_result = run_llm_refactor(original_code, analysis)
+    refactored_code = refactor_result.get("refactored_code", "")
+    diff = refactor_result.get("diff", "")
 
-    # Post confidence score
+    doc_result = run_llm_docstrings(refactored_code)
+    documented_code = doc_result.get("documented_code", "")
+
     temp_file = file_path.parent / f"{file_path.stem}_refactored.py"
     temp_file.write_text(refactored_code, encoding="utf-8")
     post_analysis = analyze_file(temp_file)
@@ -40,6 +41,7 @@ def analyze_sync(file_path: Path):
         "llm_review": llm_review,
         "pre_confidence": pre_confidence,
         "refactored_code": refactored_code,
+        "diff": diff,
         "documented_code": documented_code,
         "post_confidence": post_confidence,
     }
@@ -73,8 +75,14 @@ async def upload_code(
     overall_pre = sum(r["pre_confidence"] for r in results) / len(results) if results else 0
     overall_post = sum(r["post_confidence"] for r in results) / len(results) if results else 0
 
+    # NEW: generate README for repo if repo_url provided
+    readme = None
+    if repo_url:
+        readme = run_llm_readme(results, overall_pre, overall_post)
+
     return {
         "overall_pre_confidence": round(overall_pre, 2),
         "overall_post_confidence": round(overall_post, 2),
         "files": results,
+        "readme": readme,
     }

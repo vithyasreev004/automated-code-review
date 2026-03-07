@@ -1,4 +1,4 @@
-import os, time, requests
+import os, time, requests, json
 from dotenv import load_dotenv
 from threading import Semaphore
 
@@ -17,20 +17,40 @@ BACKOFF_SECONDS = 5
 def run_llm_review(structure: dict, analysis: dict) -> dict:
     prompt = f"""
 You are a senior Python software engineer performing a strict code review.
-Return JSON ONLY:
-{{"summary":"...", "risks":["..."], "confidence":number}}
+Return JSON ONLY with keys:
+- summary (string)
+- issues (list of {{category, severity, line, suggestion}}). If none, return []
+- confidence (float)
+
 AST:{structure}
 Static Analysis:{analysis}
 """
-    payload = {"model": MODEL, "messages":[{"role":"system","content":"You are a strict code reviewer."},{"role":"user","content":prompt}], "temperature":0.2, "max_tokens":400}
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {"role":"system","content":"You are a strict code reviewer."},
+            {"role":"user","content":prompt}
+        ],
+        "temperature":0.2,
+        "max_tokens":600
+    }
     for attempt in range(1, MAX_RETRIES+1):
         with LLM_SEMAPHORE:
             response = requests.post(URL, headers=HEADERS, json=payload, timeout=60)
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
+        data = response.json()
+        if "choices" in data and len(data["choices"]) > 0:
+            content = data["choices"][0]["message"]["content"]
+            try:
+                cleaned = content.strip().strip("`")
+                parsed = json.loads(cleaned)
+                if "issues" not in parsed:
+                    parsed["issues"] = []
+                return parsed
+            except Exception:
+                return {"summary":"Invalid JSON from LLM","issues":[],"confidence":0}
         if response.status_code == 429:
             if attempt == MAX_RETRIES:
-                return {"summary":"LLM rate limit exceeded","risks":["LLM throttled"],"confidence":0}
+                return {"summary":"LLM rate limit exceeded","issues":[],"confidence":0}
             time.sleep(BACKOFF_SECONDS*attempt)
         else:
-            return {"summary":f"LLM error {response.status_code}","risks":[response.text],"confidence":0}
+            return {"summary":f"LLM error {response.status_code}","issues":[],"confidence":0}
