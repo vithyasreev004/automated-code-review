@@ -1,4 +1,4 @@
-import requests, json
+import requests, json, re
 from .review_llm import URL, HEADERS, MODEL, LLM_SEMAPHORE
 
 def run_llm_docstrings(refactored_code: str) -> dict:
@@ -19,17 +19,27 @@ Code:
         "temperature":0.2,
         "max_tokens":800
     }
+
     with LLM_SEMAPHORE:
         response = requests.post(URL, headers=HEADERS, json=payload, timeout=60)
     data = response.json()
+
     if "choices" in data and len(data["choices"]) > 0:
         content = data["choices"][0]["message"]["content"]
-        try:
-            cleaned = content.strip().strip("`")
-            parsed = json.loads(cleaned)
-            if "issues" not in parsed:
-                parsed["issues"] = []
-            return parsed
-        except Exception:
-            return {"documented_code":content,"issues":[]}
-    return {"documented_code":"","issues":[]}
+
+        # 🔹 Extract JSON block safely
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+                if "documented_code" not in parsed:
+                    parsed["documented_code"] = refactored_code
+                if "issues" not in parsed:
+                    parsed["issues"] = []
+                return parsed
+            except Exception:
+                return {"documented_code": f'"""Stub (invalid JSON)"""\n{refactored_code}', "issues":[]}
+        else:
+            return {"documented_code": f'"""Stub (no JSON found)"""\n{refactored_code}', "issues":[]}
+
+    return {"documented_code": f'"""Stub (no choices returned)"""\n{refactored_code}', "issues":[]}

@@ -1,4 +1,4 @@
-import requests, json
+import requests, json, re
 from .review_llm import URL, HEADERS, MODEL, LLM_SEMAPHORE
 
 def run_llm_refactor(code: str, issues: dict) -> dict:
@@ -22,19 +22,27 @@ Issues:
         "temperature":0.2,
         "max_tokens":800
     }
+
     with LLM_SEMAPHORE:
         response = requests.post(URL, headers=HEADERS, json=payload, timeout=60)
     data = response.json()
+
     if "choices" in data and len(data["choices"]) > 0:
         content = data["choices"][0]["message"]["content"]
-        try:
-            cleaned = content.strip().strip("`")
-            parsed = json.loads(cleaned)
-            if "refactored_code" not in parsed:
-                parsed["refactored_code"] = content
-            if "diff" not in parsed:
-                parsed["diff"] = ""
-            return parsed
-        except Exception:
-            return {"refactored_code":content,"diff":""}
-    return {"refactored_code":"","diff":""}
+
+        # 🔹 Extract JSON block safely
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+                if "refactored_code" not in parsed:
+                    parsed["refactored_code"] = code
+                if "diff" not in parsed:
+                    parsed["diff"] = ""
+                return parsed
+            except Exception:
+                return {"refactored_code": code, "diff": f"Refactor failed: invalid JSON"}
+        else:
+            return {"refactored_code": code, "diff": "Refactor failed: no JSON found"}
+
+    return {"refactored_code": code, "diff": "Refactor failed: no choices returned"}

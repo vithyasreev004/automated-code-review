@@ -1,4 +1,4 @@
-import requests, json
+import requests
 from .review_llm import URL, HEADERS, MODEL, LLM_SEMAPHORE
 
 def run_llm_readme(results: list, overall_pre: float, overall_post: float) -> str:
@@ -9,7 +9,7 @@ def run_llm_readme(results: list, overall_pre: float, overall_post: float) -> st
         "overall_pre_confidence": overall_pre,
         "overall_post_confidence": overall_post,
         "files_analyzed": len(results),
-        "issues_detected": sum(len(r["llm_review"].get("issues", [])) for r in results)
+        "issues_detected": sum(len(r.get("issues", [])) for r in results)
     }
 
     prompt = f"""
@@ -34,9 +34,13 @@ Repo Summary:
         "temperature":0.3,
         "max_tokens":800
     }
+
     with LLM_SEMAPHORE:
         response = requests.post(URL, headers=HEADERS, json=payload, timeout=60)
     data = response.json()
+
     if "choices" in data and len(data["choices"]) > 0:
-        return data["choices"][0]["message"]["content"]
+        content = data["choices"][0]["message"]["content"]
+        # README is plain text, so just return it safely
+        return content.strip()
     return "# README\n\nFailed to generate README."
