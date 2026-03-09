@@ -51,6 +51,22 @@ st.markdown("""
 
 
 
+# -------------------------------
+# Safe JSON Parser for LLM Output
+# -------------------------------
+def safe_parse_json(raw_output, filename):
+    try:
+        return json.loads(raw_output)
+    except Exception:
+        st.warning(f"⚠️ Refactor failed for {filename}: invalid JSON")
+        return {
+            "issues": [],
+            "diff": None,
+            "refactored_code": None,
+            "documented_code": None
+        }
+
+
 st.title("📊 Automated Code Review & Documentation Assistant")
 
 # -------------------------------
@@ -116,6 +132,26 @@ def display_results(result, filename: str):
         } for i in result["issues"]]))
     else:
         st.info("No issues detected.")
+    
+
+
+    # ✅ Use safe JSON parsing for diffs/refactor outputs
+    parsed = safe_parse_json(result.get("llm_output", "{}"), filename)
+
+    if parsed.get("diff"):
+        st.subheader("🔧 Suggested Changes (Diff)")
+        st.code(parsed["diff"], language="diff")
+    else:
+        st.info("No valid diff available for this file.")
+
+    if parsed.get("refactored_code"):
+        with st.expander("✨ Refactored Code"):
+            st.code(parsed["refactored_code"], language="python")
+
+    if parsed.get("documented_code"):
+        with st.expander("📖 Documented Code"):
+            st.code(parsed["documented_code"], language="python")
+
 
     if result.get("diff"):
         st.subheader("🔧 Suggested Changes (Diff)")
@@ -164,15 +200,19 @@ latest = r.get("latest_session")
 
 if latest:
     try:
-        summary = json.loads(latest.decode("utf-8"))
-        st.write(f"Repo: {summary['repo']}")
-        st.write(f"Files analyzed: {summary['files']}")
-        st.write(f"Pre-confidence: {summary['pre_conf']}")
-        st.write(f"Post-confidence: {summary['post_conf']}")
+        decoded = latest.decode("utf-8").strip()
+        if decoded:
+            summary = json.loads(decoded)
+            st.write(f"Repo: {summary['repo']}")
+            st.write(f"Files analyzed: {summary['files']}")
+            st.write(f"Pre-confidence: {summary['pre_conf']}")
+            st.write(f"Post-confidence: {summary['post_conf']}")
+        else:
+            st.info("ℹ️ Cached session is empty. Run an analysis first.")
     except Exception as e:
-        st.error(f"⚠️ Could not parse cached session: {e}")
+        st.info("ℹ️ No valid cached session yet. Run an analysis to populate this panel.")
 else:
-    st.info("No cached session yet. Run an analysis first!")
+    st.info("ℹ️ No cached session found. Run an analysis first.")
 
 # -------------------------------
 # Sidebar: History Panel
@@ -194,7 +234,9 @@ try:
     if not history.empty:
         for _, row in history.iterrows():
             # Short label: Run ID + truncated repo name
-            label = f"Run {row['id']} | {row['repo'][:10]}..."
+            label = f"{row['repo']} (Run {row['id']})"
+
+
             
             # Create two columns in the same row
             col1, col2 = st.sidebar.columns([6,1])
@@ -323,6 +365,19 @@ def insert_run(repo, results, overall_pre, overall_post):
     finally:
         cur.close()
         conn.close()
+def cache_latest_session(repo, files, pre_conf, post_conf):
+    r = get_redis_connection()
+    summary = {
+        "repo": repo,
+        "files": files,
+        "pre_conf": pre_conf,
+        "post_conf": post_conf
+    }
+    try:
+        r.set("latest_session", json.dumps(summary))
+        st.success("✅ Latest session cached in Redis")
+    except Exception as e:
+        st.error(f"❌ Failed to cache session: {e}")
 
 # -------------------------------
 # Main Logic
@@ -340,7 +395,9 @@ if uploaded_file:
     display_repo_summary([result], result["pre_confidence"], result["post_confidence"], None)
 
     # ✅ Insert into PostgreSQL
+    # For uploaded file
     insert_run("uploaded_files", [result], result["pre_confidence"], result["post_confidence"])
+    cache_latest_session("uploaded_files", 1, result["pre_confidence"], result["post_confidence"])
 
 elif repo_url:
     repo_path, _ = clone_github_repo_temp(repo_url)
@@ -374,7 +431,9 @@ elif repo_url:
         display_repo_summary(results, round(overall_pre, 2), round(overall_post, 2), None)
 
         # ✅ Insert into PostgreSQL for repo runs
+        # For repo analysis
         insert_run(repo_url if repo_url else "uploaded_repo", results, overall_pre, overall_post)
+        cache_latest_session(repo_url, len(results), overall_pre, overall_post)
 
     else:
         st.warning("No Python files found in the selected folders/repo.")
