@@ -236,7 +236,6 @@ try:
             # Short label: Run ID + truncated repo name
             label = f"{row['repo']} (Run {row['id']})"
 
-
             
             # Create two columns in the same row
             col1, col2 = st.sidebar.columns([6,1])
@@ -428,10 +427,19 @@ elif repo_url:
 
         overall_pre = sum(r["pre_confidence"] for r in results) / len(results)
         overall_post = sum(r["post_confidence"] for r in results) / len(results)
-        display_repo_summary(results, round(overall_pre, 2), round(overall_post, 2), None)
+
+        # 🔹 Generate README using readme_llm
+        readme = None
+        try:
+            from app.llm.readme_llm import run_llm_readme
+            readme = run_llm_readme(results, overall_pre, overall_post)
+        except Exception as e:
+            st.warning(f"README generation failed: {e}")
+
+        # ✅ Pass readme into display_repo_summary
+        display_repo_summary(results, round(overall_pre, 2), round(overall_post, 2), readme)
 
         # ✅ Insert into PostgreSQL for repo runs
-        # For repo analysis
         insert_run(repo_url if repo_url else "uploaded_repo", results, overall_pre, overall_post)
         cache_latest_session(repo_url, len(results), overall_pre, overall_post)
 
