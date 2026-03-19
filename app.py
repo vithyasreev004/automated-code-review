@@ -260,6 +260,44 @@ if st.sidebar.button("➕ New Chat"):
 if st.sidebar.button("🗑️ Clear Chat History"):
     st.session_state.clear()
     st.sidebar.success("Chat cleared")
+def insert_file_result(session_id, repo_name, result):
+    conn = get_pg_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO public.file_results
+            (session_id, timestamp, repo_name, files_analyzed, overall_pre_confidence, overall_post_confidence)
+            VALUES (%s, NOW(), %s, %s, %s, %s)
+            """,
+            (
+                session_id,
+                repo_name,
+                1,  # one file per insert
+                result["pre_confidence"],
+                result["post_confidence"]
+            )
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+def log_error(session_id, filename, error_message):
+    conn = get_pg_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO public.errors
+            (session_id, filename, error_message, created_at)
+            VALUES (%s, %s, %s, NOW())
+            """,
+            (session_id, filename, error_message)
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
 
 # -------------------------------
 # Display Selected Run
@@ -337,6 +375,49 @@ if "confirm_delete_id" in st.session_state:
             del st.session_state["confirm_delete_id"]
 
 # -------------------------------
+# Sidebar: Per-File Results Panel
+# -------------------------------
+st.sidebar.subheader("📄 Per-File Results")
+try:
+    engine = create_engine("postgresql+psycopg2://postgres:admin123@localhost:5432/reviewdb")
+    file_df = pd.read_sql(
+    "SELECT session_id, repo_name, overall_pre_confidence, overall_post_confidence, timestamp "
+    "FROM public.file_results ORDER BY timestamp DESC LIMIT 1", engine
+)
+
+    for _, row in file_df.iterrows():
+        with st.sidebar.container():
+            st.sidebar.markdown(f"**Session {row['session_id']} — {row['repo_name']}**")
+            col1, col2, col3 = st.sidebar.columns(3)
+            col1.metric("Pre Confidence", row["overall_pre_confidence"])
+            col2.metric("Post Confidence", row["overall_post_confidence"])
+            col3.write(f"🕒 {row['timestamp']:%Y-%m-%d %H:%M}")
+            st.sidebar.markdown("---")
+except Exception as e:
+    st.sidebar.error(f"⚠️ Could not load file results: {e}")
+
+# -------------------------------
+# Sidebar: Error Logs Panel
+# -------------------------------
+st.sidebar.subheader("🚨 Error Logs")
+try:
+    engine = create_engine("postgresql+psycopg2://postgres:admin123@localhost:5432/reviewdb")
+    error_df = pd.read_sql(
+    "SELECT session_id, filename, error_message, created_at "
+    "FROM public.errors ORDER BY created_at DESC LIMIT 1", engine
+)
+
+    for _, row in error_df.iterrows():
+        with st.sidebar.container():
+            st.sidebar.markdown(f"**Session {row['session_id']} — File: {row['filename']}**")
+            st.sidebar.error(f"{row['error_message']}")
+            st.sidebar.caption(f"🕒 {row['created_at']:%Y-%m-%d %H:%M}")
+            st.sidebar.markdown("---")
+except Exception as e:
+    st.sidebar.error(f"⚠️ Could not load error logs: {e}")
+
+
+# -------------------------------
 # Helper: Insert into PostgreSQL
 # -------------------------------
 def insert_run(repo, results, overall_pre, overall_post):
@@ -377,6 +458,25 @@ def cache_latest_session(repo, files, pre_conf, post_conf):
         st.success("✅ Latest session cached in Redis")
     except Exception as e:
         st.error(f"❌ Failed to cache session: {e}")
+def insert_session(repo_name, files_analyzed, pre_conf, post_conf):
+    conn = get_pg_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            """
+            INSERT INTO public.sessions
+            (repo_name, timestamp, files_analyzed, overall_pre_confidence, overall_post_confidence)
+            VALUES (%s, NOW(), %s, %s, %s)
+            RETURNING session_id
+            """,
+            (repo_name, files_analyzed, pre_conf, post_conf)
+        )
+        session_id = cur.fetchone()[0]
+        conn.commit()
+        return session_id
+    finally:
+        cur.close()
+        conn.close()
 
 # -------------------------------
 # Main Logic
@@ -387,16 +487,24 @@ if uploaded_file:
     chunks = chunk_code(content)
     if len(chunks) > 1:
         st.warning(f"File split into {len(chunks)} chunks for analysis due to size.")
-    result = analyze_sync(file_path)
-    result["filename"] = uploaded_file.name
-    result["original_code"] = content
-    display_results(result, uploaded_file.name)
-    display_repo_summary([result], result["pre_confidence"], result["post_confidence"], None)
 
-    # ✅ Insert into PostgreSQL
-    # For uploaded file
-    insert_run("uploaded_files", [result], result["pre_confidence"], result["post_confidence"])
-    cache_latest_session("uploaded_files", 1, result["pre_confidence"], result["post_confidence"])
+    try:
+        result = analyze_sync(file_path)
+        result["filename"] = uploaded_file.name
+        result["original_code"] = content
+        display_results(result, uploaded_file.name)
+        display_repo_summary([result], result["pre_confidence"], result["post_confidence"], None)
+
+        # ✅ Insert into PostgreSQL
+        session_id = insert_session("uploaded_files", 1, result["pre_confidence"], result["post_confidence"])
+        insert_file_result(session_id, "uploaded_files", result)
+        insert_run("uploaded_files", [result], result["pre_confidence"], result["post_confidence"])
+        cache_latest_session("uploaded_files", 1, result["pre_confidence"], result["post_confidence"])
+
+    except Exception as e:
+        session_id = insert_session("uploaded_files", 1, 0, 0)
+        log_error(session_id, uploaded_file.name, str(e))
+        st.error(f"❌ Analysis failed for {uploaded_file.name}: {e}")
 
 elif repo_url:
     repo_path, _ = clone_github_repo_temp(repo_url)
@@ -404,7 +512,6 @@ elif repo_url:
     folder_names = [f.name for f in subfolders]
 
     chosen_names = st.multiselect("Choose one or more folders to review", folder_names, default=[])
-
     target_paths = [repo_path / name for name in chosen_names] if chosen_names else [repo_path]
 
     py_files = []
@@ -414,34 +521,42 @@ elif repo_url:
     if py_files:
         st.subheader("📂 Repository Analysis")
         results = []
+        session_id = insert_session(repo_url if repo_url else "uploaded_repo", len(py_files), 0, 0)
+
         for py_file in py_files:
-            content = py_file.read_text(encoding="utf-8")
-            chunks = chunk_code(content)
-            if len(chunks) > 1:
-                st.warning(f"{py_file.name} split into {len(chunks)} chunks for analysis due to size.")
-            result = analyze_sync(py_file)
-            result["filename"] = f"{py_file.parent.name}/{py_file.name}"
-            result["original_code"] = content
-            results.append(result)
-            display_results(result, result["filename"])
+            try:
+                content = py_file.read_text(encoding="utf-8")
+                chunks = chunk_code(content)
+                if len(chunks) > 1:
+                    st.warning(f"{py_file.name} split into {len(chunks)} chunks for analysis due to size.")
+                result = analyze_sync(py_file)
+                result["filename"] = f"{py_file.parent.name}/{py_file.name}"
+                result["original_code"] = content
+                results.append(result)
+                display_results(result, result["filename"])
+                insert_file_result(session_id, repo_url, result)
+            except Exception as e:
+                log_error(session_id, py_file.name, str(e))
+                st.error(f"❌ Analysis failed for {py_file.name}: {e}")
 
-        overall_pre = sum(r["pre_confidence"] for r in results) / len(results)
-        overall_post = sum(r["post_confidence"] for r in results) / len(results)
+        if results:
+            overall_pre = sum(r["pre_confidence"] for r in results) / len(results)
+            overall_post = sum(r["post_confidence"] for r in results) / len(results)
 
-        # 🔹 Generate README using readme_llm
-        readme = None
-        try:
-            from app.llm.readme_llm import run_llm_readme
-            readme = run_llm_readme(results, overall_pre, overall_post)
-        except Exception as e:
-            st.warning(f"README generation failed: {e}")
+            # 🔹 Generate README using readme_llm
+            readme = None
+            try:
+                from app.llm.readme_llm import run_llm_readme
+                readme = run_llm_readme(results, overall_pre, overall_post)
+            except Exception as e:
+                st.warning(f"README generation failed: {e}")
 
-        # ✅ Pass readme into display_repo_summary
-        display_repo_summary(results, round(overall_pre, 2), round(overall_post, 2), readme)
+            # ✅ Pass readme into display_repo_summary
+            display_repo_summary(results, round(overall_pre, 2), round(overall_post, 2), readme)
 
-        # ✅ Insert into PostgreSQL for repo runs
-        insert_run(repo_url if repo_url else "uploaded_repo", results, overall_pre, overall_post)
-        cache_latest_session(repo_url, len(results), overall_pre, overall_post)
+            # ✅ Insert into PostgreSQL for repo runs
+            insert_run(repo_url if repo_url else "uploaded_repo", results, overall_pre, overall_post)
+            cache_latest_session(repo_url, len(results), overall_pre, overall_post)
 
     else:
         st.warning("No Python files found in the selected folders/repo.")
