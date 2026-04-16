@@ -72,6 +72,3 @@ streamlit run app.py
 - Check error logs and per‑file results in the sidebar.  
 - Export reports in JSON, Markdown, or PDF formats.  
 
-
-
-Would you like me to also add a **“Screenshots” section** with placeholders, so you can drop in images of your dashboard panels (Latest Session, Error Logs, Per‑File Results) to make the README visually appealing?
