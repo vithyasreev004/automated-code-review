@@ -1,5 +1,5 @@
 import requests
-from .review_llm import URL, HEADERS, MODEL, LLM_SEMAPHORE
+from app.llm.review_llm import URL, HEADERS, MODEL, LLM_SEMAPHORE
 
 def run_llm_readme(results: list, overall_pre: float, overall_post: float) -> str:
     """
