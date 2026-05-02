@@ -10,3 +10,4 @@ slowapi
 psycopg2-binary
 redis
 requests
+GitPython
