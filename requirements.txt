@@ -6,3 +6,7 @@ python-multipart
 pylint
 bandit
 radon 
+slowapi
+psycopg2-binary
+redis
+requests
