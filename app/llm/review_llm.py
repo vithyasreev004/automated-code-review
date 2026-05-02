@@ -3,9 +3,7 @@ from dotenv import load_dotenv
 from threading import Semaphore
 
 load_dotenv()
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if not GROQ_API_KEY:
-    raise RuntimeError("Missing GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("API_KEY")
 
 URL = "https://api.groq.com/openai/v1/chat/completions"
 HEADERS = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
