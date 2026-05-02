@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 
-from core.security import verify_api_key
+from app.core.security import verify_api_key
 
 from slowapi import Limiter
 from slowapi.util import get_remote_address
