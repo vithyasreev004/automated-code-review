@@ -1,5 +1,5 @@
 import requests, json, re
-from .review_llm import URL, HEADERS, MODEL, LLM_SEMAPHORE
+from app.llm.review_llm import URL, HEADERS, MODEL, LLM_SEMAPHORE
 
 def run_llm_refactor(code: str, issues: dict) -> dict:
     prompt = f"""
