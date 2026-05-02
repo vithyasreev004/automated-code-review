@@ -11,3 +11,6 @@ psycopg2-binary
 redis
 requests
 GitPython
+json
+os
+logging
